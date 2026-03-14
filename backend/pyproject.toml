@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ainote-community"
+version = "0.1.0"
+description = "AI Note Community backend"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "AI Note Community" }]
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pydantic-settings>=2.7.0",
+    "pydantic[email]>=2.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib>=1.7.4",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.18",
+    "pgvector>=0.3.6",
+    "openai>=1.59.0",
+    "tiktoken>=0.7.0",
+    "cryptography>=44.0.0",
+    "nh3>=0.2.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "DTZ", "E", "F", "I", "N", "S", "SIM", "T20", "UP", "W"]
+ignore = ["S101", "S105", "S106", "B008", "S324"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

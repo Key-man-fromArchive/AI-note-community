@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import base64
+import importlib
+import json
+import zipfile
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,6 +20,37 @@ def _owner_user(session: dict[str, Any]) -> dict[str, Any]:
         "org_slug": session["org_slug"],
         "role": session["role"],
     }
+
+
+def _write_sample_nsx(path: Path) -> None:
+    pixel = bytes.fromhex(
+        "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C489"
+        "0000000D49444154789C6360606060000000050001A5F645400000000049454E44AE426082"
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("config.json", json.dumps({"note": ["note-1"], "notebook": ["book-1"]}))
+        archive.writestr("book-1", json.dumps({"title": "Imported Notebook"}))
+        archive.writestr(
+            "note-1",
+            json.dumps(
+                {
+                    "title": "Imported Note",
+                    "content": "<p>Imported from NSX</p>",
+                    "parent_id": "book-1",
+                    "tag": ["alpha", "beta"],
+                    "ctime": 1710000000,
+                    "mtime": 1710003600,
+                    "attachment": {
+                        "img-ref": {
+                            "md5": "abc123",
+                            "name": "sample.png",
+                            "type": "image/png",
+                        }
+                    },
+                }
+            ),
+        )
+        archive.writestr("file_abc123", pixel)
 
 
 @pytest.mark.asyncio
@@ -197,6 +232,189 @@ async def test_snapshot_restore_recovers_previous_note_state(app_modules: tuple[
     assert restored["snapshot_id"] == snapshot["snapshot_id"]
     assert [note["title"] for note in state["notes"]] == ["Baseline"]
     assert state["snapshots"][0]["snapshot_id"] == snapshot["snapshot_id"]
+
+
+def test_nsx_import_adds_notes_notebooks_and_status(
+    app_modules: tuple[Any, Any],
+    tmp_path: Path,
+) -> None:
+    main_module, store_module = app_modules
+    nsx_path = tmp_path / "sample.nsx"
+    _write_sample_nsx(nsx_path)
+
+    result = main_module.save_uploaded_nsx(nsx_path, "sample.nsx")
+    state = store_module.store.load()
+
+    imported_note = next(note for note in state["notes"] if note["source"] == "nsx")
+    imported_notebook = next(book for book in state["notebooks"] if book["name"] == "Imported Notebook")
+
+    assert result["status"] == "completed"
+    assert result["notes_added"] == 1
+    assert result["images_extracted"] == 1
+    assert imported_note["title"] == "Imported Note"
+    assert imported_note["notebook"] == "Imported Notebook"
+    assert imported_note["tags"] == ["alpha", "beta"]
+    assert imported_notebook["note_count"] == 1
+    assert (store_module.store.settings.nsx_images_dir / "note-1" / "img-ref").exists() is True
+
+
+@pytest.mark.asyncio
+async def test_synology_pull_sync_adds_remote_notes(
+    app_modules: tuple[Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main_module, store_module = app_modules
+    integration_module = importlib.import_module("app.synology_integration")
+
+    owner_session = await main_module.member_signup(
+        main_module.SignupRequest(
+            email="owner@example.com",
+            password="strongpass1",
+            name="Owner",
+            org_name="Test Org",
+            org_slug="test-org",
+        )
+    )
+    owner_user = _owner_user(owner_session)
+
+    monkeypatch.setenv("SYNOLOGY_URL", "https://nas.local:5001")
+    monkeypatch.setenv("SYNOLOGY_USER", "tester")
+    monkeypatch.setenv("SYNOLOGY_PASSWORD", "secret")
+    main_module.get_settings.cache_clear()
+    integration_module.get_settings.cache_clear()
+
+    class FakeClient:
+        def __init__(self, url: str, user: str, password: str) -> None:
+            self.url = url
+            self.user = user
+            self.password = password
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class FakeNoteStationService:
+        def __init__(self, client: FakeClient) -> None:
+            self.client = client
+
+        async def list_notebooks(self) -> list[dict[str, Any]]:
+            return [{"object_id": "book-1", "name": "NAS Notebook"}]
+
+        async def list_notes(self) -> dict[str, Any]:
+            return {"notes": [{"object_id": "remote-1", "parent_id": "book-1", "mtime": 1711000000}]}
+
+        async def get_note(self, object_id: str) -> dict[str, Any]:
+            assert object_id == "remote-1"
+            return {
+                "object_id": object_id,
+                "parent_id": "book-1",
+                "title": "Remote Synology Note",
+                "content": "<p>pulled from nas</p>",
+                "tag": [{"name": "nas"}],
+                "mtime": 1711000000,
+            }
+
+    monkeypatch.setattr(integration_module, "SynologyClient", FakeClient)
+    monkeypatch.setattr(integration_module, "NoteStationService", FakeNoteStationService)
+
+    result = await main_module.synology_pull(current_user=owner_user)
+    state = store_module.store.load()
+    synced_note = next(note for note in state["notes"] if note["source"] == "synology")
+
+    assert result["configured"] is True
+    assert result["added"] == 1
+    assert result["updated"] == 0
+    assert synced_note["title"] == "Remote Synology Note"
+    assert synced_note["notebook"] == "NAS Notebook"
+    assert synced_note["sync_status"] == "synced"
+
+
+@pytest.mark.asyncio
+async def test_synology_pull_preserves_local_modifications_as_conflict(
+    app_modules: tuple[Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main_module, store_module = app_modules
+    integration_module = importlib.import_module("app.synology_integration")
+
+    owner_session = await main_module.member_signup(
+        main_module.SignupRequest(
+            email="owner@example.com",
+            password="strongpass1",
+            name="Owner",
+            org_name="Test Org",
+            org_slug="test-org",
+        )
+    )
+    owner_user = _owner_user(owner_session)
+
+    monkeypatch.setenv("SYNOLOGY_URL", "https://nas.local:5001")
+    monkeypatch.setenv("SYNOLOGY_USER", "tester")
+    monkeypatch.setenv("SYNOLOGY_PASSWORD", "secret")
+    main_module.get_settings.cache_clear()
+    integration_module.get_settings.cache_clear()
+
+    sync_round = {"value": 0}
+
+    class FakeClient:
+        def __init__(self, url: str, user: str, password: str) -> None:
+            self.url = url
+            self.user = user
+            self.password = password
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class FakeNoteStationService:
+        def __init__(self, client: FakeClient) -> None:
+            self.client = client
+
+        async def list_notebooks(self) -> list[dict[str, Any]]:
+            return [{"object_id": "book-1", "name": "NAS Notebook"}]
+
+        async def list_notes(self) -> dict[str, Any]:
+            mtime = 1711000000 if sync_round["value"] == 0 else 1711001000
+            return {"notes": [{"object_id": "remote-1", "parent_id": "book-1", "mtime": mtime}]}
+
+        async def get_note(self, object_id: str) -> dict[str, Any]:
+            content = "<p>initial</p>" if sync_round["value"] == 0 else "<p>remote update</p>"
+            mtime = 1711000000 if sync_round["value"] == 0 else 1711001000
+            return {
+                "object_id": object_id,
+                "parent_id": "book-1",
+                "title": "Remote Synology Note",
+                "content": content,
+                "tag": [{"name": "nas"}],
+                "mtime": mtime,
+            }
+
+    monkeypatch.setattr(integration_module, "SynologyClient", FakeClient)
+    monkeypatch.setattr(integration_module, "NoteStationService", FakeNoteStationService)
+
+    await main_module.synology_pull(current_user=owner_user)
+    state = store_module.store.load()
+    synced_note = next(note for note in state["notes"] if note["source"] == "synology")
+
+    await main_module.update_note(
+        synced_note["note_id"],
+        main_module.NoteUpdateRequest(content="locally edited"),
+        current_user=owner_user,
+    )
+
+    sync_round["value"] = 1
+    result = await main_module.synology_pull(current_user=owner_user)
+    state = store_module.store.load()
+    conflicted_note = next(note for note in state["notes"] if note["source"] == "synology")
+
+    assert result["conflicts"] == 1
+    assert conflicted_note["sync_status"] == "conflict"
+    assert conflicted_note["content"] == "locally edited"
+    assert conflicted_note["remote_conflict_data"]["content"] == "<p>remote update</p>"
 
 
 @pytest.mark.asyncio

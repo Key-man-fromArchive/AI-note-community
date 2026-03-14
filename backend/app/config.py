@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     APP_BASE_URL: str = "http://localhost:3000"
     DATA_DIR: str = "./data"
+    NSX_IMPORTS_PATH: str = "./data/nsx_imports"
+    NSX_IMAGES_PATH: str = "./data/nsx_images"
+    SYNOLOGY_URL: str = ""
+    SYNOLOGY_USER: str = ""
+    SYNOLOGY_PASSWORD: str = ""
+    SYNOLOGY_VERIFY_SSL: bool = False
     GITHUB_FEEDBACK_REPO: str = ""
     GITHUB_FEEDBACK_TOKEN: str = ""
     GITHUB_FEEDBACK_LABELS: str = "community-feedback,ainote-community"
@@ -41,6 +47,14 @@ class Settings(BaseSettings):
     @property
     def feedback_assets_dir(self) -> Path:
         return self.data_dir / "feedback_assets"
+
+    @property
+    def nsx_imports_dir(self) -> Path:
+        return Path(self.NSX_IMPORTS_PATH).resolve()
+
+    @property
+    def nsx_images_dir(self) -> Path:
+        return Path(self.NSX_IMAGES_PATH).resolve()
 
     @property
     def github_feedback_labels(self) -> list[str]:

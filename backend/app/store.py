@@ -29,6 +29,29 @@ def _default_state() -> dict[str, Any]:
         "notes": [],
         "feedback": [],
         "snapshots": [],
+        "integrations": {
+            "nsx_import": {
+                "status": "idle",
+                "filename": None,
+                "notes_processed": 0,
+                "notes_added": 0,
+                "notes_updated": 0,
+                "images_extracted": 0,
+                "errors": [],
+                "last_import_at": None,
+            },
+            "synology_sync": {
+                "status": "idle",
+                "configured": False,
+                "last_synced_at": None,
+                "added": 0,
+                "updated": 0,
+                "skipped": 0,
+                "remote_missing": 0,
+                "conflicts": 0,
+                "error": None,
+            },
+        },
         "counters": {
             "user": 1,
             "notebook": 1,
@@ -46,6 +69,8 @@ class JsonStore:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.settings.snapshots_dir.mkdir(parents=True, exist_ok=True)
         self.settings.feedback_assets_dir.mkdir(parents=True, exist_ok=True)
+        self.settings.nsx_imports_dir.mkdir(parents=True, exist_ok=True)
+        self.settings.nsx_images_dir.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> dict[str, Any]:
         with _LOCK:
@@ -53,10 +78,11 @@ class JsonStore:
                 state = _default_state()
                 self._write_state(state)
                 return state
-            return json.loads(self.settings.state_file.read_text(encoding="utf-8"))
+            return self._normalize_state(json.loads(self.settings.state_file.read_text(encoding="utf-8")))
 
     def save(self, state: dict[str, Any]) -> dict[str, Any]:
         with _LOCK:
+            state = self._normalize_state(state)
             state["updated_at"] = _iso_now()
             self._write_state(state)
             return state
@@ -66,7 +92,7 @@ class JsonStore:
             if not self.settings.state_file.exists():
                 state = _default_state()
             else:
-                state = json.loads(self.settings.state_file.read_text(encoding="utf-8"))
+                state = self._normalize_state(json.loads(self.settings.state_file.read_text(encoding="utf-8")))
             result = callback(state)
             state["updated_at"] = _iso_now()
             self._write_state(state)
@@ -112,7 +138,7 @@ class JsonStore:
             if not self.settings.state_file.exists():
                 current_state = _default_state()
             else:
-                current_state = json.loads(self.settings.state_file.read_text(encoding="utf-8"))
+                current_state = self._normalize_state(json.loads(self.settings.state_file.read_text(encoding="utf-8")))
             restored_state["snapshots"] = current_state.get("snapshots", [])
             counters = restored_state.setdefault("counters", {})
             current_snapshot_counter = current_state.get("counters", {}).get("snapshot", 1)
@@ -133,6 +159,20 @@ class JsonStore:
             json.dumps(state, ensure_ascii=True, indent=2),
             encoding="utf-8",
         )
+
+    def _normalize_state(self, state: dict[str, Any]) -> dict[str, Any]:
+        defaults = _default_state()
+        integrations = state.setdefault("integrations", {})
+        for key, value in defaults["integrations"].items():
+            current = integrations.setdefault(key, {})
+            for subkey, subvalue in value.items():
+                current.setdefault(subkey, subvalue)
+        counters = state.setdefault("counters", {})
+        for key, value in defaults["counters"].items():
+            counters.setdefault(key, value)
+        for key in ["setup", "organization", "users", "notebooks", "notes", "feedback", "snapshots"]:
+            state.setdefault(key, defaults[key])
+        return state
 
 
 store = JsonStore()

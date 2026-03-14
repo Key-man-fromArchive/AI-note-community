@@ -132,6 +132,13 @@ class ApiClient {
     })
   }
 
+  postForm<T>(path: string, formData: FormData) {
+    return this.request<T>(path, {
+      method: 'POST',
+      body: formData,
+    })
+  }
+
   put<T>(path: string, body?: unknown) {
     return this.request<T>(path, {
       method: 'PUT',

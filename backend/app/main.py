@@ -4,9 +4,11 @@ import base64
 import binascii
 import re
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -16,6 +18,7 @@ from app.config import get_settings
 from app.github_feedback import create_github_issue
 from app.security import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
 from app.store import store
+from app.synology_integration import get_nsx_status, get_synology_sync_status, pull_synology_notes, save_uploaded_nsx
 
 app = FastAPI(
     title="AI Note Community",
@@ -655,6 +658,13 @@ async def create_note(
             "created_at": timestamp,
             "updated_at": timestamp,
             "tags": [],
+            "source": None,
+            "source_note_id": None,
+            "source_notebook_id": None,
+            "source_updated_at": None,
+            "synced_at": None,
+            "sync_status": None,
+            "remote_conflict_data": None,
         }
         state["notes"].insert(0, note)
         for notebook in state["notebooks"]:
@@ -693,6 +703,8 @@ async def update_note(
         if payload.content is not None:
             note["content"] = payload.content
         note["updated_at"] = _iso_now()
+        if note.get("source") == "synology":
+            note["sync_status"] = "local_modified"
         return note
 
     return store.mutate(_mutate)
@@ -958,3 +970,41 @@ async def snapshot_scheduler_status(current_user: dict[str, Any] = Depends(requi
         "next_incremental_at": None,
         "last_snapshot_at": last_snapshot,
     }
+
+
+@app.get("/api/nsx/status")
+async def nsx_import_status(current_user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    _ = current_user
+    return get_nsx_status()
+
+
+@app.post("/api/nsx/import")
+async def nsx_import(
+    archive: UploadFile = File(...),
+    current_user: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    _ = current_user
+    filename = archive.filename or "import.nsx"
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(delete=False, suffix=Path(filename).suffix or ".nsx") as temp_file:
+            while chunk := await archive.read(1024 * 1024):
+                temp_file.write(chunk)
+            temp_path = Path(temp_file.name)
+        return save_uploaded_nsx(temp_path, filename)
+    finally:
+        await archive.close()
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+@app.get("/api/synology/status")
+async def synology_status(current_user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    _ = current_user
+    return get_synology_sync_status()
+
+
+@app.post("/api/synology/pull")
+async def synology_pull(current_user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    _ = current_user
+    return await pull_synology_notes()

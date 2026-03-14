@@ -1,10 +1,12 @@
 # AI Note Community
 
-Community edition scaffold for an independent note workspace derived from LabNote AI.
+AI Note Community is an open, community-scoped note workspace derived from the broader LabNote AI product direction.
 
-## Product Boundary
+This repository is intentionally narrow. It focuses on core note management and collaboration workflows that can stand on their own without private or premium product dependencies.
 
-This repository is intentionally limited to five areas:
+## Scope
+
+The community edition currently targets these areas:
 
 1. Note editing
 2. Member management
@@ -12,11 +14,11 @@ This repository is intentionally limited to five areas:
 4. Embedding search
 5. Note graph
 
-Community feedback is also treated as a first-class workflow, including up to 3 screenshot attachments and an optional GitHub issue bridge for faster triage.
+Community feedback is also included as a first-class workflow, with support for screenshot attachments and an optional GitHub issue bridge.
 
-Everything else from the main product stays out of scope for this repo.
+## Out of Scope
 
-## Non-Goals
+The following product areas are explicitly excluded from this repository:
 
 - AI librarian chat
 - AI reviewer
@@ -27,25 +29,83 @@ Everything else from the main product stays out of scope for this repo.
 - Factory appliance activation
 - Billing and feature gates
 
-## Current Status
+## Current Stack
 
-This repo now includes a runnable community shell:
+- Backend: FastAPI
+- Frontend: React + Vite
+- Database: PostgreSQL with `pgvector`
+- Local persistence: lightweight JSON-backed shell components where needed
 
-- minimal FastAPI backend for auth, setup, notes, members, search, graph, and snapshots
-- minimal React frontend for login, setup, notes, search, graph, feedback, members, and backup settings
-- backend pytest coverage for the core shell flows
-- repo-level scope and extraction docs
-- licensing and git hygiene
+## Features Included Today
 
-The current implementation is intentionally independent and lightweight. It is not yet a product-grade extraction of the private backend domain stack.
+- Authentication, signup, and setup flow
+- Notes and notebooks
+- Workspace member management
+- Search and graph views
+- Snapshot and backup settings
+- Feedback submission with up to 3 screenshots
+- Optional GitHub issue sync for feedback
 
-## Suggested Next Steps
+## Quick Start
 
-1. Harden the current backend shell with tests and stable persistence contracts
-2. Decide which private-domain modules should be extracted versus reimplemented
-3. Replace lightweight placeholders only where the community boundary is already clear
-4. Validate the split before importing any premium-adjacent code
+### Option 1: One-command bootstrap
 
-## Source Product
+```bash
+./install.sh
+```
 
-The source of truth for extraction is the private `labnote-ai` codebase. This repo should stay independent and community-scoped.
+This script:
+
+- creates `.env` from `.env.example` if needed
+- generates local secrets
+- starts the Docker stack
+- runs database migrations
+
+After startup:
+
+- Frontend: `http://localhost:3000`
+- API docs: `http://localhost:8001/docs`
+
+### Option 2: Manual Docker startup
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+docker compose exec -T backend alembic upgrade head
+```
+
+## Environment Variables
+
+Main configuration lives in `.env`.
+
+Important values:
+
+- `DATABASE_URL`: backend database connection string
+- `JWT_SECRET`: secret used for access and refresh tokens
+- `OPENAI_API_KEY`: required if embedding-based search is connected to OpenAI
+- `APP_BASE_URL`: frontend base URL
+- `GITHUB_FEEDBACK_REPO`: optional target repo for feedback issue creation
+- `GITHUB_FEEDBACK_TOKEN`: optional token for GitHub feedback sync
+
+See [.env.example](/mnt/docker/ainote-community/.env.example) for the full template.
+
+## Repository Layout
+
+- [backend](/mnt/docker/ainote-community/backend): FastAPI app, config, storage layer, and tests
+- [frontend](/mnt/docker/ainote-community/frontend): React application
+- [docs](/mnt/docker/ainote-community/docs): scope and extraction documentation
+- [scripts](/mnt/docker/ainote-community/scripts): extraction and support scripts
+
+## Development Notes
+
+- The current implementation is intentionally lightweight and independent.
+- Backend validation can be run with `cd backend && pytest tests/test_community_shell.py`.
+- This repository should remain community-scoped and should not import private-product modules unless that boundary is explicitly approved.
+
+## Project Boundary
+
+This repository is not intended to be a full mirror of the private product. It is a clean, community-oriented extraction path. Any future expansion should preserve that boundary and avoid reintroducing premium-only or internal-only concerns.
+
+## Source Context
+
+The original reference product is the private `labnote-ai` codebase, but this repository is meant to operate independently.
